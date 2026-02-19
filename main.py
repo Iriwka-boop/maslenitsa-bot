@@ -86,96 +86,100 @@ results = {
     "jam": ("jam.jpg", "🍓 Блин с вареньем\nТы душа команды.")
 }
 
-# Словарь для хранения данных пользователей
 user_data = {}
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     user_data[message.from_user.id] = {
         "scores": defaultdict(int),
-        "q": 0
+        "q": 0,
+        "msg_id": None  # ID сообщения с вопросом
     }
 
     await message.answer("🥞 Добро пожаловать в тест «Какой ты масленичный блин?»")
-    await send_question(message)
+    await send_question(message.from_user.id, message.chat.id)
 
-async def send_question(message):
-    data = user_data.get(message.from_user.id)
+async def send_question(user_id, chat_id):
+    data = user_data.get(user_id)
     if data is None:
-        await message.answer("Произошла ошибка. Попробуй /start")
         return
 
     q_index = data["q"]
 
     if q_index >= TOTAL_QUESTIONS:
-        await show_result(message)
+        await show_result(user_id, chat_id)
         return
 
     question, answers = questions[q_index]
-    keyboard = types.InlineKeyboardMarkup()
-
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
     for text, typ in answers:
-        keyboard.add(types.InlineKeyboardButton(text=text, callback_data=typ))
+        keyboard.insert(types.InlineKeyboardButton(text=text, callback_data=typ))
 
-    await message.answer(question, reply_markup=keyboard)
+    # Если сообщение с вопросом ещё не отправлено — создаём
+    if data["msg_id"] is None:
+        msg = await bot.send_message(chat_id, question, reply_markup=keyboard)
+        data["msg_id"] = msg.message_id
+    else:
+        # Иначе редактируем существующее сообщение
+        await bot.edit_message_text(
+            question,
+            chat_id=chat_id,
+            message_id=data["msg_id"],
+            reply_markup=keyboard
+        )
 
 @dp.callback_query_handler()
 async def handle_answer(callback: types.CallbackQuery):
     user_id = callback.from_user.id
+    chat_id = callback.message.chat.id
+    data = user_data.get(user_id)
+
     await callback.answer()
 
-    # Если пользователь не найден, создаём заново
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "scores": defaultdict(int),
-            "q": 0
-        }
-
-    # Обработка перезапуска
     if callback.data == "restart":
         user_data[user_id] = {
             "scores": defaultdict(int),
-            "q": 0
+            "q": 0,
+            "msg_id": None
         }
-
-        # Создаём "виртуальное" сообщение для send_question
-        class DummyMessage:
-            def __init__(self, chat_id, from_user):
-                self.chat = types.Chat(id=chat_id, type="private")
-                self.from_user = from_user
-
-        dummy_msg = DummyMessage(callback.message.chat.id, callback.from_user)
-        await send_question(dummy_msg)
+        await send_question(user_id, chat_id)
         return
 
-    # Добавляем очки и переходим к следующему вопросу
-    data = user_data[user_id]
+    if data is None:
+        # Если данных нет — создаём заново
+        user_data[user_id] = {
+            "scores": defaultdict(int),
+            "q": 0,
+            "msg_id": None
+        }
+        data = user_data[user_id]
+
+    # Считаем очки и переходим к следующему вопросу
     data["scores"][callback.data] += 1
     data["q"] += 1
 
-    # Удаляем старое сообщение с кнопками
-    await callback.message.delete()
+    await send_question(user_id, chat_id)
 
-    # Отправляем следующий вопрос
-    await send_question(callback.message)
-
-async def show_result(message):
-    data = user_data[message.from_user.id]
+async def show_result(user_id, chat_id):
+    data = user_data[user_id]
     scores = data["scores"]
 
-    await message.answer("🥞 Считаем твой результат...")
-    await asyncio.sleep(2)
+    await bot.send_message(chat_id, "🥞 Считаем твой результат...")
+    await asyncio.sleep(1.5)
 
-    # Определяем результат
     result_type = max(scores, key=scores.get)
     image_path, description = results[result_type]
 
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton("🔁 Пройти заново", callback_data="restart"))
 
-    # Отправляем фото с результатом
     with open(image_path, "rb") as photo:
-        await bot.send_photo(message.chat.id, photo, caption=description, reply_markup=keyboard)
+        await bot.send_photo(chat_id, photo, caption=description, reply_markup=keyboard)
+
+    # Сброс для нового прохождения
+    data["msg_id"] = None
+    data["q"] = 0
+    data["scores"] = defaultdict(int)
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
