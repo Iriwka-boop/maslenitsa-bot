@@ -88,6 +88,7 @@ results = {
 
 user_data = {}
 
+
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     user_data[message.from_user.id] = {
@@ -97,6 +98,7 @@ async def start(message: types.Message):
 
     await message.answer("🥞 Добро пожаловать в тест «Какой ты масленичный блин?»")
     await send_question(message)
+
 
 async def send_question(message):
     data = user_data[message.from_user.id]
@@ -114,9 +116,23 @@ async def send_question(message):
 
     await message.answer(question, reply_markup=keyboard)
 
+
 @dp.callback_query_handler()
 async def handle_answer(callback: types.CallbackQuery):
     user_id = callback.from_user.id
+
+    # Удаляем старое сообщение с кнопками
+    await callback.message.delete()
+
+    if callback.data == "restart":
+        user_data[user_id] = {
+            "scores": defaultdict(int),
+            "q": 0
+        }
+        await callback.answer()
+        await send_question(callback.message)
+        return
+
     data = user_data[user_id]
 
     data["scores"][callback.data] += 1
@@ -125,12 +141,13 @@ async def handle_answer(callback: types.CallbackQuery):
     await callback.answer()
     await send_question(callback.message)
 
+
 async def show_result(message):
     data = user_data[message.from_user.id]
     scores = data["scores"]
 
     await message.answer("🥞 Считаем твой результат...")
-    await asyncio.sleep(2)
+    await asyncio.sleep(1)
 
     result_type = max(scores, key=scores.get)
     image_path, description = results[result_type]
@@ -139,7 +156,13 @@ async def show_result(message):
     keyboard.add(types.InlineKeyboardButton("🔁 Пройти заново", callback_data="restart"))
 
     with open(image_path, "rb") as photo:
-        await bot.send_photo(message.chat.id, photo, caption=description, reply_markup=keyboard)
+        await bot.send_photo(
+            message.chat.id,
+            photo,
+            caption=description,
+            reply_markup=keyboard
+        )
+
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
