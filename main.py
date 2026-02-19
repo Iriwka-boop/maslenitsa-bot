@@ -4,7 +4,7 @@ import asyncio
 from aiogram import Bot, Dispatcher, executor, types
 from collections import defaultdict
 
-API_TOKEN = os.getenv("BOT_TOKEN")
+API_TOKEN = os.getenv("BOT_TOKEN")  # Ваш токен бота
 
 logging.basicConfig(level=logging.INFO)
 
@@ -13,6 +13,7 @@ dp = Dispatcher(bot)
 
 TOTAL_QUESTIONS = 10
 
+# Вопросы и варианты
 questions = [
     ("1️⃣ В новой рабочей задаче ты…",
      [("Берёшь ответственность", "ikra"),
@@ -75,6 +76,7 @@ questions = [
       ("Аналитик", "salmon")]),
 ]
 
+# Результаты
 results = {
     "ikra": ("ikra.jpg", "🥞 Блин с икрой\nТы лидер и драйвер команды."),
     "smetana": ("smetana.jpg", "🥞 Блин со сметаной\nТы создаёшь атмосферу поддержки."),
@@ -86,100 +88,81 @@ results = {
     "jam": ("jam.jpg", "🍓 Блин с вареньем\nТы душа команды.")
 }
 
+# Данные пользователей
 user_data = {}
 
+# Старт теста
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    user_data[message.from_user.id] = {
+    user_id = message.from_user.id
+    user_data[user_id] = {
         "scores": defaultdict(int),
-        "q": 0,
-        "msg_id": None  # ID сообщения с вопросом
+        "q": 0
     }
 
     await message.answer("🥞 Добро пожаловать в тест «Какой ты масленичный блин?»")
-    await send_question(message.from_user.id, message.chat.id)
+    await send_question(user_id, message.chat.id)
 
+# Отправка вопроса
 async def send_question(user_id, chat_id):
     data = user_data.get(user_id)
-    if data is None:
+    if not data:
         return
 
     q_index = data["q"]
-
     if q_index >= TOTAL_QUESTIONS:
         await show_result(user_id, chat_id)
         return
 
-    question, answers = questions[q_index]
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    question_text, answers = questions[q_index]
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)  # Каждая кнопка на отдельной строке
     for text, typ in answers:
-        keyboard.insert(types.InlineKeyboardButton(text=text, callback_data=typ))
+        keyboard.add(types.InlineKeyboardButton(text=text, callback_data=f"answer:{typ}"))
 
-    # Если сообщение с вопросом ещё не отправлено — создаём
-    if data["msg_id"] is None:
-        msg = await bot.send_message(chat_id, question, reply_markup=keyboard)
-        data["msg_id"] = msg.message_id
-    else:
-        # Иначе редактируем существующее сообщение
-        await bot.edit_message_text(
-            question,
-            chat_id=chat_id,
-            message_id=data["msg_id"],
-            reply_markup=keyboard
-        )
+    await bot.send_message(chat_id, question_text, reply_markup=keyboard)
 
-@dp.callback_query_handler()
+# Обработка ответа
+@dp.callback_query_handler(lambda c: c.data and c.data.startswith("answer:"))
 async def handle_answer(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    chat_id = callback.message.chat.id
     data = user_data.get(user_id)
-
-    await callback.answer()
-
-    if callback.data == "restart":
-        user_data[user_id] = {
-            "scores": defaultdict(int),
-            "q": 0,
-            "msg_id": None
-        }
-        await send_question(user_id, chat_id)
+    if not data:
         return
 
-    if data is None:
-        # Если данных нет — создаём заново
-        user_data[user_id] = {
-            "scores": defaultdict(int),
-            "q": 0,
-            "msg_id": None
-        }
-        data = user_data[user_id]
-
-    # Считаем очки и переходим к следующему вопросу
-    data["scores"][callback.data] += 1
+    answer_type = callback.data.split(":")[1]
+    data["scores"][answer_type] += 1
     data["q"] += 1
 
-    await send_question(user_id, chat_id)
+    await callback.answer()  # убирает "часики" на кнопке
+    await send_question(user_id, callback.message.chat.id)
 
+# Показ результата
 async def show_result(user_id, chat_id):
-    data = user_data[user_id]
+    data = user_data.get(user_id)
+    if not data:
+        return
+
     scores = data["scores"]
-
-    await bot.send_message(chat_id, "🥞 Считаем твой результат...")
-    await asyncio.sleep(1.5)
-
     result_type = max(scores, key=scores.get)
     image_path, description = results[result_type]
 
-    keyboard = types.InlineKeyboardMarkup()
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(types.InlineKeyboardButton("🔁 Пройти заново", callback_data="restart"))
 
     with open(image_path, "rb") as photo:
         await bot.send_photo(chat_id, photo, caption=description, reply_markup=keyboard)
 
-    # Сброс для нового прохождения
-    data["msg_id"] = None
-    data["q"] = 0
-    data["scores"] = defaultdict(int)
+# Пройти заново
+@dp.callback_query_handler(lambda c: c.data == "restart")
+async def restart(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user_data[user_id] = {
+        "scores": defaultdict(int),
+        "q": 0
+    }
+    await callback.answer()
+    await send_question(user_id, callback.message.chat.id)
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
