@@ -4,7 +4,7 @@ import asyncio
 from aiogram import Bot, Dispatcher, executor, types
 from collections import defaultdict
 
-API_TOKEN = os.getenv("BOT_TOKEN")  # Ваш токен бота
+API_TOKEN = os.getenv("BOT_TOKEN")  # Установите свой токен бота в переменной окружения
 
 logging.basicConfig(level=logging.INFO)
 
@@ -99,7 +99,6 @@ async def start(message: types.Message):
         "scores": defaultdict(int),
         "q": 0
     }
-
     await message.answer("🥞 Добро пожаловать в тест «Какой ты масленичный блин?»")
     await send_question(user_id, message.chat.id)
 
@@ -115,8 +114,7 @@ async def send_question(user_id, chat_id):
         return
 
     question_text, answers = questions[q_index]
-
-    keyboard = types.InlineKeyboardMarkup(row_width=1)  # Каждая кнопка на отдельной строке
+    keyboard = types.InlineKeyboardMarkup(row_width=1)  # кнопки в столбик
     for text, typ in answers:
         keyboard.add(types.InlineKeyboardButton(text=text, callback_data=f"answer:{typ}"))
 
@@ -128,13 +126,14 @@ async def handle_answer(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     data = user_data.get(user_id)
     if not data:
+        await callback.answer("Произошла ошибка, начни заново /start", show_alert=True)
         return
 
     answer_type = callback.data.split(":")[1]
     data["scores"][answer_type] += 1
     data["q"] += 1
 
-    await callback.answer()  # убирает "часики" на кнопке
+    await callback.answer()  # убирает "часики"
     await send_question(user_id, callback.message.chat.id)
 
 # Показ результата
