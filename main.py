@@ -4,12 +4,18 @@ import asyncio
 from aiogram import Bot, Dispatcher, executor, types
 from collections import defaultdict
 
+# Токен бота
 API_TOKEN = os.getenv("BOT_TOKEN")
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
+
+# Абсолютная директория скрипта для корректной работы с файлами на Railway
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+TOTAL_QUESTIONS = 10
 
 questions = [
     ("1️⃣ В новой рабочей задаче ты…",
@@ -73,8 +79,6 @@ questions = [
       ("Аналитик", "salmon")]),
 ]
 
-TOTAL_QUESTIONS = len(questions)
-
 results = {
     "ikra": ("ikra.jpg", "🥞 Блин с икрой\nТы лидер и драйвер команды."),
     "smetana": ("smetana.jpg", "🥞 Блин со сметаной\nТы создаёшь атмосферу поддержки."),
@@ -86,15 +90,12 @@ results = {
     "jam": ("jam.jpg", "🍓 Блин с вареньем\nТы душа команды.")
 }
 
+# Данные по пользователям
 user_data = {}
 
-
+# Отправка вопроса пользователю
 async def send_question(chat_id, user_id):
-    data = user_data.get(user_id)
-
-    if not data:
-        return
-
+    data = user_data[user_id]
     q_index = data["q"]
 
     if q_index >= TOTAL_QUESTIONS:
@@ -109,81 +110,58 @@ async def send_question(chat_id, user_id):
 
     await bot.send_message(chat_id, question, reply_markup=keyboard)
 
-
+# Старт теста
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     user_data[message.from_user.id] = {
         "scores": defaultdict(int),
         "q": 0
     }
-
     await message.answer("🥞 Добро пожаловать в тест «Какой ты масленичный блин?»")
     await send_question(message.chat.id, message.from_user.id)
 
-
+# Обработка нажатий на кнопки
 @dp.callback_query_handler()
 async def handle_answer(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     chat_id = callback.message.chat.id
 
+    # Если пользователь не в базе — создаём его
     if user_id not in user_data:
         user_data[user_id] = {"scores": defaultdict(int), "q": 0}
 
+    # Перезапуск теста
     if callback.data == "restart":
         user_data[user_id] = {"scores": defaultdict(int), "q": 0}
         await callback.answer("Тест начат заново!")
         await send_question(chat_id, user_id)
         return
 
-    # защита от неизвестного callback
-    if callback.data not in results:
-        await callback.answer()
-        return
-
+    # Добавляем балл и идём к следующему вопросу
     user_data[user_id]["scores"][callback.data] += 1
     user_data[user_id]["q"] += 1
 
     await callback.answer()
     await send_question(chat_id, user_id)
 
-
+# Вычисление и отправка результата
 async def show_result(chat_id, user_id):
-    data = user_data.get(user_id)
-
-    if not data:
-        return
-
+    data = user_data[user_id]
     scores = data["scores"]
-
-    if not scores:
-        await bot.send_message(chat_id, "Ошибка подсчёта результатов. Попробуй ещё раз.")
-        return
 
     await bot.send_message(chat_id, "🥞 Считаем твой результат...")
     await asyncio.sleep(1)
 
-    # безопасный выбор результата
-    result_type = sorted(scores.items(), key=lambda x: x[1], reverse=True)[0][0]
-
-    if result_type not in results:
-        await bot.send_message(chat_id, "Ошибка результата. Попробуй ещё раз.")
-        return
-
-    image_path, description = results[result_type]
+    result_type = max(scores, key=scores.get)
+    image_name, description = results[result_type]
+    image_path = os.path.join(BASE_DIR, image_name)
 
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(types.InlineKeyboardButton("🔁 Пройти заново", callback_data="restart"))
 
-    try:
-        with open(image_path, "rb") as photo:
-            await bot.send_photo(chat_id, photo, caption=description, reply_markup=keyboard)
-    except Exception as e:
-        logging.error(f"Ошибка отправки фото: {e}")
-        await bot.send_message(chat_id, description, reply_markup=keyboard)
+    with open(image_path, "rb") as photo:
+        await bot.send_photo(chat_id, photo, caption=description, reply_markup=keyboard)
 
-    # очищаем данные после результата
-    user_data.pop(user_id, None)
-
-
+# Запуск бота
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
