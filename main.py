@@ -4,19 +4,17 @@ import asyncio
 from aiogram import Bot, Dispatcher, executor, types
 from collections import defaultdict
 
-# Токен бота
 API_TOKEN = os.getenv("BOT_TOKEN")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # Папка с ботом и фото
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
-# Абсолютная директория скрипта для корректной работы с файлами на Railway
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 TOTAL_QUESTIONS = 10
 
+# Вопросы и варианты ответов
 questions = [
     ("1️⃣ В новой рабочей задаче ты…",
      [("Берёшь ответственность", "ikra"),
@@ -79,6 +77,7 @@ questions = [
       ("Аналитик", "salmon")]),
 ]
 
+# Результаты
 results = {
     "ikra": ("ikra.jpg", "🥞 Блин с икрой\nТы лидер и драйвер команды."),
     "smetana": ("smetana.jpg", "🥞 Блин со сметаной\nТы создаёшь атмосферу поддержки."),
@@ -90,10 +89,10 @@ results = {
     "jam": ("jam.jpg", "🍓 Блин с вареньем\nТы душа команды.")
 }
 
-# Данные по пользователям
+# Хранение состояния пользователей
 user_data = {}
 
-# Отправка вопроса пользователю
+# Отправка вопроса
 async def send_question(chat_id, user_id):
     data = user_data[user_id]
     q_index = data["q"]
@@ -113,38 +112,33 @@ async def send_question(chat_id, user_id):
 # Старт теста
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    user_data[message.from_user.id] = {
-        "scores": defaultdict(int),
-        "q": 0
-    }
+    user_data[message.from_user.id] = {"scores": defaultdict(int), "q": 0}
     await message.answer("🥞 Добро пожаловать в тест «Какой ты масленичный блин?»")
     await send_question(message.chat.id, message.from_user.id)
 
-# Обработка нажатий на кнопки
+# Обработка ответа
 @dp.callback_query_handler()
 async def handle_answer(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     chat_id = callback.message.chat.id
 
-    # Если пользователь не в базе — создаём его
     if user_id not in user_data:
         user_data[user_id] = {"scores": defaultdict(int), "q": 0}
 
-    # Перезапуск теста
     if callback.data == "restart":
         user_data[user_id] = {"scores": defaultdict(int), "q": 0}
         await callback.answer("Тест начат заново!")
         await send_question(chat_id, user_id)
         return
 
-    # Добавляем балл и идём к следующему вопросу
+    # Увеличиваем счет
     user_data[user_id]["scores"][callback.data] += 1
     user_data[user_id]["q"] += 1
 
     await callback.answer()
     await send_question(chat_id, user_id)
 
-# Вычисление и отправка результата
+# Вывод результата
 async def show_result(chat_id, user_id):
     data = user_data[user_id]
     scores = data["scores"]
@@ -152,16 +146,25 @@ async def show_result(chat_id, user_id):
     await bot.send_message(chat_id, "🥞 Считаем твой результат...")
     await asyncio.sleep(1)
 
+    # Берём ключ с наибольшим количеством баллов
     result_type = max(scores, key=scores.get)
+
+    if result_type not in results:
+        await bot.send_message(chat_id, "🥞 Не удалось определить твой блин. Попробуй снова.")
+        return
+
     image_name, description = results[result_type]
     image_path = os.path.join(BASE_DIR, image_name)
 
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(types.InlineKeyboardButton("🔁 Пройти заново", callback_data="restart"))
 
-    with open(image_path, "rb") as photo:
-        await bot.send_photo(chat_id, photo, caption=description, reply_markup=keyboard)
+    # Проверка, есть ли фото
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as photo:
+            await bot.send_photo(chat_id, photo, caption=description, reply_markup=keyboard)
+    else:
+        await bot.send_message(chat_id, description, reply_markup=keyboard)
 
-# Запуск бота
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
