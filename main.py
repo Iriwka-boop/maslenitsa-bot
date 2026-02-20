@@ -11,8 +11,6 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
-TOTAL_QUESTIONS = 10
-
 questions = [
     ("1️⃣ В новой рабочей задаче ты…",
      [("Берёшь ответственность", "ikra"),
@@ -75,6 +73,8 @@ questions = [
       ("Аналитик", "salmon")]),
 ]
 
+TOTAL_QUESTIONS = len(questions)
+
 results = {
     "ikra": ("ikra.jpg", "🥞 Блин с икрой\nТы лидер и драйвер команды."),
     "smetana": ("smetana.jpg", "🥞 Блин со сметаной\nТы создаёшь атмосферу поддержки."),
@@ -88,8 +88,13 @@ results = {
 
 user_data = {}
 
+
 async def send_question(chat_id, user_id):
-    data = user_data[user_id]
+    data = user_data.get(user_id)
+
+    if not data:
+        return
+
     q_index = data["q"]
 
     if q_index >= TOTAL_QUESTIONS:
@@ -97,11 +102,13 @@ async def send_question(chat_id, user_id):
         return
 
     question, answers = questions[q_index]
+
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     for text, typ in answers:
         keyboard.add(types.InlineKeyboardButton(text=text, callback_data=typ))
 
     await bot.send_message(chat_id, question, reply_markup=keyboard)
+
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
@@ -109,47 +116,74 @@ async def start(message: types.Message):
         "scores": defaultdict(int),
         "q": 0
     }
+
     await message.answer("🥞 Добро пожаловать в тест «Какой ты масленичный блин?»")
     await send_question(message.chat.id, message.from_user.id)
+
 
 @dp.callback_query_handler()
 async def handle_answer(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     chat_id = callback.message.chat.id
 
-    # Проверка на существование пользователя
     if user_id not in user_data:
         user_data[user_id] = {"scores": defaultdict(int), "q": 0}
 
-    # Если пользователь нажал "restart"
     if callback.data == "restart":
         user_data[user_id] = {"scores": defaultdict(int), "q": 0}
         await callback.answer("Тест начат заново!")
         await send_question(chat_id, user_id)
         return
 
-    # Добавляем балл и переходим к следующему вопросу
+    # защита от неизвестного callback
+    if callback.data not in results:
+        await callback.answer()
+        return
+
     user_data[user_id]["scores"][callback.data] += 1
     user_data[user_id]["q"] += 1
 
     await callback.answer()
     await send_question(chat_id, user_id)
 
+
 async def show_result(chat_id, user_id):
-    data = user_data[user_id]
+    data = user_data.get(user_id)
+
+    if not data:
+        return
+
     scores = data["scores"]
+
+    if not scores:
+        await bot.send_message(chat_id, "Ошибка подсчёта результатов. Попробуй ещё раз.")
+        return
 
     await bot.send_message(chat_id, "🥞 Считаем твой результат...")
     await asyncio.sleep(1)
 
-    result_type = max(scores, key=scores.get)
+    # безопасный выбор результата
+    result_type = sorted(scores.items(), key=lambda x: x[1], reverse=True)[0][0]
+
+    if result_type not in results:
+        await bot.send_message(chat_id, "Ошибка результата. Попробуй ещё раз.")
+        return
+
     image_path, description = results[result_type]
 
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(types.InlineKeyboardButton("🔁 Пройти заново", callback_data="restart"))
 
-    with open(image_path, "rb") as photo:
-        await bot.send_photo(chat_id, photo, caption=description, reply_markup=keyboard)
+    try:
+        with open(image_path, "rb") as photo:
+            await bot.send_photo(chat_id, photo, caption=description, reply_markup=keyboard)
+    except Exception as e:
+        logging.error(f"Ошибка отправки фото: {e}")
+        await bot.send_message(chat_id, description, reply_markup=keyboard)
+
+    # очищаем данные после результата
+    user_data.pop(user_id, None)
+
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
